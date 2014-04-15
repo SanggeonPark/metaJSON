@@ -22,34 +22,29 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 '''
 
-import datetime, time, os
+import datetime
+import time
+import os
+import sys
+from pystache import Renderer
+# import pickle
+# from cStringIO import StringIO
+
 
 class ObjectiveCCodeGenerator :
 
     projectPrefix = ""
     dirPath = ""
-    
+
     def __init__(self):
         projectPrefix = ""
         dirPath = "classes"
-    
-    
-    def getCommonDescriptionString(self) :
-        today = datetime.date.fromtimestamp(time.time())
-        commonDescription = "//\n//  Created by MetaJSONParser."
-        commonDescription += "\n//  Copyright (c) "+  str(today.year) +" SinnerSchrader Mobile. All rights reserved.\n\n"
-        return commonDescription
-    
-    def getHeaderDescriptionString(self, name) :
-        hDescriptionString = "//\n//  "+ self.getTitledString(name) +".h\n"
-        hDescriptionString += self.getCommonDescriptionString()
-        return hDescriptionString
-    
-    def getSourceDescriptionString(self, name) :
-        mDescriptionString = "//\n//  "+ self.getTitledString(name) +".m\n"
-        mDescriptionString += self.getCommonDescriptionString()
-        return mDescriptionString
-    
+
+    def template_file_path(self, filename) :
+        templatePath = os.path.realpath( __file__ )
+        templatePath = templatePath.replace(os.path.basename( __file__ ), 'templates')
+        return os.path.join(templatePath, filename)
+
     def makeVarName(self,schemeObj) :
         returnName = schemeObj.type_name
         if str(schemeObj.type_name) == "id" or str(schemeObj.type_name) == "description" :
@@ -65,284 +60,101 @@ class ObjectiveCCodeGenerator :
                     returnName = self.projectPrefix.lower() + titleName
                     #print returnName
                     break
-    
+
         return returnName
-    
+
+    def process_properties(self, propObj) :
+        propertyHash = {"declaration": self.propertyDefinitionString(propObj)}
+        if propObj.type_description and len(propObj.type_description) :
+            propertyHash["comment"] = propObj.type_description
+        return propertyHash
+
+    def human_header_content(self, schemeObj) :
+        templateFile = open(self.template_file_path("header.h.mustache"), "r")
+        today = datetime.date.fromtimestamp(time.time())
+
+        hashParams = {"date": str(today.year), "machineClassName": schemeObj.getMachineClassName(), "humanClassName": schemeObj.getClassName()}
+        return Renderer().render(templateFile.read(), hashParams)
+
+    def human_source_content(self, schemeObj) :
+        templateFile = open(self.template_file_path("source.m.mustache"), "r")
+        today = datetime.date.fromtimestamp(time.time())
+
+        hashParams = {"date": str(today.year), "machineClassName": schemeObj.getMachineClassName(), "humanClassName": schemeObj.getClassName()}
+        return Renderer().render(templateFile.read(), hashParams)
+
+    def machine_header_content(self, schemeObj) :
+        templateFile = open(self.template_file_path("_header.h.mustache"), "r")
+        today = datetime.date.fromtimestamp(time.time())
+        props = []
+        for prop in schemeObj.props:
+            props.append(self.process_properties(prop))
+        hashParams = {"date": str(today.year), "machineClassName": schemeObj.getMachineClassName(), "humanClassName": schemeObj.getClassName(), "variableName": self.makeVarName(schemeObj), "properties": props}
+        # print "hashParams"
+        # print hashParams
+
+        return Renderer().render(templateFile.read(), hashParams)
+
+    def machine_source_content(self, schemeObj) :
+        templateFile = open(self.template_file_path("_source.m.mustache"), "r")
+        today = datetime.date.fromtimestamp(time.time())
+
+        props = []
+        for prop in schemeObj.props:
+            props.append(prop.__dict__)
+        print props
+
+        # retrieve all params for template
+        hashParams = {"date": str(today.year), "machineClassName": schemeObj.getMachineClassName(), "projectPrefix": self.projectPrefix, "humanClassName": schemeObj.getClassName(), "variableName": self.makeVarName(schemeObj), "properties": props}
+
+        # render
+        sourceString = Renderer().render(templateFile.read(), hashParams)
+
+
+        return sourceString
+
     def make(self, schemeObj) :
-        headerString = ""
-        sourceString = ""
-    
-        hDescriptionString = self.getHeaderDescriptionString(schemeObj.getMachineClassName())
-        mDescriptionString = self.getSourceDescriptionString(schemeObj.getMachineClassName())
+        # machine files
+        self.write_abstract_file(schemeObj.getMachineClassName() + ".h", self.machine_header_content(schemeObj))
+        self.write_abstract_file(schemeObj.getMachineClassName() + ".m", self.machine_source_content(schemeObj))
 
-        hIncludeHeaders = "#import <Foundation/Foundation.h>\n"
-        mIncludeHeaders = "#import \"" + self.projectPrefix + "APIParser.h\"\n"
-        mIncludeHeaders += "#import \"NSString+RegExValidation.h\"\n"
-        mIncludeHeaders += "#import \"" + schemeObj.getClassName() +".h\"\n"
-        predefineCalsses = ""
-        interfaceDefinition = "@class " + schemeObj.getClassName() + ";\n\n"
-        interfaceDefinition += "@interface " + schemeObj.getMachineClassName()
-        interfaceImplementation = "@implementation " + schemeObj.getMachineClassName() + "\n"
-        propertyDefinition = ""
-        methodDefinition = ""
-        initMethodString = ""
-        
-        factoryMethodImpl = "\n+ (" + schemeObj.getClassName() +" *)" + self.makeVarName(schemeObj) + "WithDictionary:(NSDictionary *)dic withError:(NSError **)error {\n"
-        factoryMethodImpl += "    return [[" + schemeObj.getClassName() + " alloc] initWithDictionary:dic withError:error];\n"
-        factoryMethodImpl += "}\n\n"
-        
-        descriptionMethodString = "- (NSString *)description {\n    return [NSString stringWithFormat:@\"%@\",[self propertyDictionary]];\n}\n"
-        propertyDictionaryString = "- (NSDictionary *)propertyDictionary {\n"
-        
-        encodeMethodString = "- (void)encodeWithCoder:(NSCoder*)coder {\n"
-        decodeMethodString = "- (id)initWithCoder:(NSCoder *)coder {\n"
-        
-        """
-            check base type
-        """
-        if schemeObj.isNaturalType() or schemeObj.rootBaseType() == "any":
-            print "error : ", schemeObj.base_type ," (" , schemeObj.type_name, ") is natural type. Cannot make source code for it.\n"
-            return False
-        if schemeObj.rootBaseType() != "object" :
-            print "error : ", schemeObj.base_type ," (" , schemeObj.type_name,") is not custom 'object' type.\n"
-            return False
-                
-        if len(schemeObj.props) == 0 :
-            # don't make source codes.
-            print "NO Property : " + schemeObj.getMachineClassName()
+        # human files
+        self.write_human_file(schemeObj.getClassName() + ".h", self.human_header_content(schemeObj))
+        self.write_human_file(schemeObj.getClassName() + ".m",  self.human_source_content(schemeObj))
 
-        if schemeObj.base_type != "object" :
+        return True
 
-            encodeMethodString += "    [super encodeWithCoder:coder];\n"
-            decodeMethodString += "    self = [super initWithCoder:coder];\n"
-            propertyDictionaryString += "    NSDictionary *parentDic = [super propertyDictionary];\n"
-            propertyDictionaryString += "    NSMutableDictionary *dic = [[NSMutableDictionary alloc] initWithDictionary:parentDic];\n"
-            
-            #print "(make : !object) : find scheme : " + schemeObj.base_type + " from : " + schemeObj.type_name
-            if schemeObj.hasScheme(schemeObj.base_type) :
-                parentSchemeObj = schemeObj.getScheme(schemeObj.base_type)
-                hIncludeHeaders += "#import \"" + parentSchemeObj.getClassName() + ".h\"\n"
-                interfaceDefinition += " : " + parentSchemeObj.getClassName() + "\n"
-                initMethodString = "- (id)initWithDictionary:(NSDictionary *)dic  withError:(NSError **)error {\n    self = [super initWithDictionary:dic withError:error];\n"
-            else :
-                print "error : ", schemeObj.base_type, "(parent type of ", schemeObj.type_name ,") is not defined.\n"
-                return False
-        else :
-            decodeMethodString += "    self = [super init];\n"
-            interfaceDefinition += " : NSObject <NSCoding>\n"
-            initMethodString = "- (id)initWithDictionary:(NSDictionary *)dic  withError:(NSError **)error {\n    self = [super init];\n"
-            propertyDictionaryString += "    NSMutableDictionary *dic = [[NSMutableDictionary alloc] init];\n"
+    def write_abstract_file(self, filename, content) :
+        folder = "/AbstractInterfaceFiles/"
+        if not os.path.exists(self.dirPath + folder):
+            os.makedirs(self.dirPath + folder)
 
-        initMethodString += "    if (self) {\n"
-        interfaceDefinition += "\n"
-        #factory method
-        methodDefinition += "+ (" + schemeObj.getClassName() +" *)" + self.makeVarName(schemeObj) + "WithDictionary:(NSDictionary *)dic withError:(NSError **)error;\n"
-        #initialize
-        methodDefinition += "- (id)initWithDictionary:(NSDictionary *)dic withError:(NSError **)error;\n"
-        #property dictionary method
-        methodDefinition += "- (NSDictionary *)propertyDictionary;\n"
-        getterMethodImplementation = ""
-    
-        
-        """
-            check properties
-        """
-        otherClasses = {}
-        for propObj in schemeObj.props :
-            if propObj.type_description and len(propObj.type_description) :
-                propertyDefinition += "// " + propObj.type_description + "\n"
-            propertyDefinition += self.propertyDefinitionString(propObj)
+        filepath = self.dirPath + folder + filename
+        self.write_file(filepath, content)
 
-            decodeMethodString += self.propertyDecodeString(propObj, 1)
-            encodeMethodString += self.propertyEncodeString(propObj, 1)
-            propertyDictionaryString += self.setPropertyDictionaryString(propObj, "dic", 1)
+    def write_human_file(self, filename, content) :
+        folder = "/"
+        if not os.path.exists(self.dirPath + folder):
+            os.makedirs(self.dirPath + folder)
 
-            subTypeSchemeList = propObj.getSubType()
-            if propObj.rootBaseType() == "array" and len(subTypeSchemeList) == 1 and not "any" in subTypeSchemeList:
-                subTypeSchemeName = subTypeSchemeList[0]
-                tmpArrayName = "tmp" + self.getTitledString(propObj.type_name) + "Array"
-                initMethodString += self.getNaturalTypeGetterFromDictionaryCode(propObj, "NSArray *", tmpArrayName, "dic", propObj.type_name, (propObj.required != True), 2, "self")
-                initMethodString += self.getNaturalTypeValidationCode(propObj, tmpArrayName, 2, "self")
-                tmpMutableArrayName = "tmp" + self.getTitledString(propObj.type_name)
-                initMethodString += "        NSMutableArray *" + tmpMutableArrayName + " = [[NSMutableArray alloc] initWithCapacity:" + tmpArrayName + ".count];\n"
-                
-                initMethodString += "        for (NSUInteger loop = 0; loop < " + tmpArrayName + ".count; loop++) {\n"
-                subTypeSchemeObj = propObj.getScheme(subTypeSchemeName)
+        filepath = self.dirPath + folder + filename
+        self.write_file(filepath, content)
 
-                if subTypeSchemeName in propObj.naturalTypeList :
-                    initMethodString += self.getNaturalTypeGetterFromArrayCode(subTypeSchemeName, self.getNaturalTypeClassString(subTypeSchemeName), "tmpValue", tmpArrayName, "loop", (propObj.required != True), 3, "self")
-                    initMethodString += "            if (tmpValue) {\n"
-                    initMethodString += "                [" + tmpMutableArrayName + " addObject:tmpValue];\n"
-                    initMethodString += "            }\n"
-                elif subTypeSchemeObj and subTypeSchemeObj.isNaturalType() :
-                    if subTypeSchemeObj :
-                        initMethodString += self.getNaturalTypeGetterFromArrayCode(subTypeSchemeObj, self.getNaturalTypeClassString(subTypeSchemeObj.rootBaseType()), "tmpValue", tmpArrayName, "loop", (propObj.required != True), 3, "self")
-                        initMethodString += self.getNaturalTypeValidationCode(subTypeSchemeObj, "tmpValue", 3, "self")
-                    else :
-                        initMethodString += self.getNaturalTypeGetterFromArrayCode(subTypeSchemeName, self.getNaturalTypeClassString(subTypeSchemeObj.rootBaseType()), "tmpValue", tmpArrayName, "loop", (propObj.required != True), 3, "self")
-                    initMethodString += "            if (tmpValue) {\n"
-                    initMethodString += "                [" + tmpMutableArrayName + " addObject:tmpValue];\n"
-                    initMethodString += "            }\n"
-                elif subTypeSchemeObj and subTypeSchemeObj.rootBaseType() == "object" :
-                    tmpDicName = "tmpDic"
-                    initMethodString += self.getDictionaryGetterFromArrayCode(tmpDicName, tmpArrayName, "loop", False, 3, "self")
-                    initMethodString += "            " + subTypeSchemeObj.getClassName() + "*tmpObject = nil;\n"
-                    initMethodString += self.getObjectAllocatorFromDictionaryCode(False, subTypeSchemeObj.getClassName(), "tmpObject", tmpDicName, (propObj.required != True), 3, "self")
-                    initMethodString += "            if (tmpObject) {\n"
-                    initMethodString += "                [" + tmpMutableArrayName + " addObject:tmpObject];\n"
-                    initMethodString += "            }\n"
-                else :
-                    print "Error : can't handle subType of " + propObj.type_name
-                    return False
-
-                initMethodString += "        }\n"
-                initMethodString += "        self." + self.makeVarName(propObj) + " = [NSArray arrayWithArray:" + tmpMutableArrayName + "];\n"
-        
-            elif propObj.isNaturalType() :
-                initMethodString += self.getNaturalTypeGetterFromDictionaryCode(propObj, "", "self." + self.makeVarName(propObj), "dic", propObj.type_name, (propObj.required != True), 2, "self")
-                initMethodString += self.getNaturalTypeValidationCode(propObj, "self." + self.makeVarName(propObj), 2, "self")
-                if len(subTypeSchemeList) > 1 or "any" in subTypeSchemeList :
-                    pass
-                else :
-                    continue
-        
-            elif propObj.rootBaseType() == "object" :
-                if otherClasses.has_key(propObj.type_name) == False :
-                    otherClasses[propObj.type_name] =  propObj
-                tmpVarName = "tmp"+self.getTitledString(propObj.type_name)
-                initMethodString += self.getDictionaryGetterFromDictionaryCode(tmpVarName, "dic", propObj.type_name, (propObj.required != True), 2, "self")
-                initMethodString += self.getObjectAllocatorFromDictionaryCode(False, propObj.getClassName(), "self." + self.makeVarName(propObj), tmpVarName, (propObj.required != True), 2, "self")
-                continue
-            else :
-                initMethodString += self.getUndefinedTypeGetterFromDictionaryCode("", "self." + self.makeVarName(propObj), "dic", propObj.type_name, (propObj.required != True), 2, "nil")
-
-            if propObj.rootBaseType() == "array" and len(subTypeSchemeList) == 1 and not "any" in subTypeSchemeList:
-                pass
-            else :
-                for methodDefinitionString in self.getterMethodDefinitionString(propObj) :
-                    methodDefinition += methodDefinitionString
-                getterMethodImplementation += self.getterMethodString(propObj);
-
-            if propObj.rootBaseType() == "multi" :
-                for multiTypeScheme in propObj.getBaseTypes() :
-                    if multiTypeScheme in propObj.naturalTypeList or multiTypeScheme == "any" :
-                        continue
-                    #print "(make : property multi) : find scheme : " + multiTypeScheme + " from : " + propObj.type_name
-                    elif schemeObj.hasScheme(multiTypeScheme) == False :
-                        print "Warning : " + propObj.type_name + " in " + propObj.getDomainString() + " (multi) has undefined base-type."
-                        print "          undefined type : " + multiTypeScheme
-                        continue
-                    multiTypeSchemeObj = propObj.getScheme(multiTypeScheme)
-                
-                    if multiTypeSchemeObj.rootBaseType() == "object" and otherClasses.has_key(multiTypeScheme) == False:
-                        otherClasses[multiTypeScheme] =  multiTypeSchemeObj
-            elif propObj.rootBaseType() == "any" :
-                pass
-
-            elif propObj.rootBaseType() == "array" :
-                for subTypeScheme in propObj.getSubType() :
-                    if subTypeScheme in propObj.naturalTypeList or subTypeScheme == "any" :
-                        continue
-                    #print "(make : property array) : find scheme : " + subTypeScheme + " from : " + propObj.type_name
-                    elif propObj.hasScheme(subTypeScheme) == False:
-                        print "Warning : " + propObj.type_name + " in " + propObj.getDomainString() + " (array) has undefined sub type."
-                        print "          undefined type : " + multiTypeScheme
-                        continue
-                    subTypeSchemeObj = propObj.getScheme(subTypeScheme)
-                    if subTypeSchemeObj.rootBaseType() == "object" and otherClasses.has_key(subTypeSchemeObj.type_name) == False :
-                        otherClasses[subTypeSchemeObj.type_name] =  subTypeSchemeObj
-
-        encodeMethodString += "}\n"
-        decodeMethodString += "    return self;\n}\n"
-        propertyDictionaryString += "    return dic;\n}\n"
-        otherClassNameList = []
-        otherClassList = []
-        for otherClassName in otherClasses :
-            otherClassObject = otherClasses[otherClassName]
-            if not otherClassObject.getClassName() in otherClassNameList :
-                otherClassList.append(otherClassObject)
-                otherClassNameList.append(otherClassObject.getClassName())
-
-        for includeTypeObj in otherClassList :
-            predefineCalsses += "@class " + includeTypeObj.getClassName() + ";\n"
-            mIncludeHeaders += "#import \""+ includeTypeObj.getClassName() + ".h\"\n"
-            if len(includeTypeObj.props) and includeTypeObj.rootBaseType() == "object" :
-                self.make(includeTypeObj)
-
-        initMethodString += "    }\n" + "    return self;\n}\n\n"
-        interfaceDefinition += "\n" + propertyDefinition + "\n" + methodDefinition + "\n@end\n"
-
-        interfaceImplementation += "\n#pragma mark - factory\n" + factoryMethodImpl
-        interfaceImplementation += "\n#pragma mark - initialize\n" + initMethodString
-        interfaceImplementation += "\n#pragma mark - getter\n" + getterMethodImplementation
-        interfaceImplementation += "\n#pragma mark - NSCoding\n" + encodeMethodString + decodeMethodString
-        interfaceImplementation += "\n#pragma mark - Object Info\n" + propertyDictionaryString + descriptionMethodString +"\n@end\n"
-        headerString += hDescriptionString + hIncludeHeaders + "\n"
-
-        if len(predefineCalsses) > 0 :
-            headerString += predefineCalsses + "\n"
-
-        headerString += interfaceDefinition + "\n"
-        sourceString += mDescriptionString + mIncludeHeaders + "\n\n" + interfaceImplementation
-
+    def write_file(self, filename, content) :
         if not os.path.exists(self.dirPath):
             os.makedirs(self.dirPath)
 
         if self.dirPath.endswith("/") :
             self.dirPath = self.dirPath[:-1]
 
-        if not os.path.exists(self.dirPath + "/AbstractInterfaceFiles/"):
-            os.makedirs(self.dirPath + "/AbstractInterfaceFiles/")
 
-        #machine file
-        #print headerString
-        try:
-            headerFile = open(self.dirPath + "/AbstractInterfaceFiles/" + schemeObj.getMachineClassName() + ".h", "w")
-            print "create " + self.dirPath + "/AbstractInterfaceFiles/" + schemeObj.getMachineClassName() + ".h" + " file..."
-            headerFile.write(headerString) # Write a string to a file
-        finally :
-            headerFile.close()
-
-        #print sourceString
-        try:
-            sourceFile = open(self.dirPath + "/AbstractInterfaceFiles/" + schemeObj.getMachineClassName() + ".m", "w")
-            print "create " + self.dirPath + "/AbstractInterfaceFiles/" + schemeObj.getMachineClassName() + ".m" + " file..."
-            sourceFile.write(sourceString) # Write a string to a file
-        finally :
-            sourceFile.close()
-
-        
-        #customizable file 
-        customizableInterface = self.getHeaderDescriptionString(schemeObj.getClassName())
-        customizableInterface += "#import \"" + schemeObj.getMachineClassName() +".h\"\n"
-        customizableInterface += "@interface " + schemeObj.getClassName() + " : " + schemeObj.getMachineClassName() + "\n\n@end\n\n"
-
-        customizableImplementation = self.getSourceDescriptionString(schemeObj.getClassName())
-        customizableImplementation += "#import \"" + schemeObj.getClassName() +".h\"\n"
-        customizableImplementation += "@implementation " + schemeObj.getClassName() + "\n\n@end\n\n"
-        
-
-        #print headerString
-        customizableInterfaceFileName = self.dirPath + "/" + schemeObj.getClassName() + ".h"
-        if os.path.isfile(customizableInterfaceFileName) is False :
-            print "create " + customizableInterfaceFileName + " file..."
+        if os.path.isfile(filename) is False :
+            print "create " + filename + " file..."
             try:
-                headerFile = open(customizableInterfaceFileName, "w")
-                headerFile.write(customizableInterface) # Write a string to a file
+                writefile = open(filename, "w")
+                writefile.write(content) # Write a string to a file
             finally :
-                headerFile.close()
-
-        #print sourceString
-        customizableImplementationFileName = self.dirPath + "/" + schemeObj.getClassName() + ".m"
-        if os.path.isfile(customizableImplementationFileName) is False :
-            print "create " + customizableImplementationFileName + " file..."
-            try:
-                sourceFile = open(customizableImplementationFileName, "w")
-                sourceFile.write(customizableImplementation) # Write a string to a file
-            finally :
-                sourceFile.close()
-
-        return True
+                writefile.close()
 
 
     """
@@ -350,10 +162,10 @@ class ObjectiveCCodeGenerator :
     """
     def getterMethodDefinitionStringInDictionary(self, returnTypeName, typeName, typeTitle, postFix) :
         return "- (" + returnTypeName + ")" + typeName + "As" + typeTitle + postFix
-    
+
     def getterMethodDefinitionStringInArray(self, returnTypeName, typeName, arrayName, postFix) :
         return "- (" + returnTypeName + ")" + typeName + "In"+  arrayName + postFix
-    
+
     def getTitledString(self, inputString) :
         titledString = inputString.upper()
         titledString = titledString[:1] + inputString[1:]
@@ -384,7 +196,7 @@ class ObjectiveCCodeGenerator :
 
     def getterMethodDefinitionString(self, schemeObj) :
         resultStringList= []
-        
+
         titleName = schemeObj.type_name.upper()
         titleName = titleName[:1] + schemeObj.type_name[1:]
         postFix = ":(NSError **)error;\n"
@@ -396,12 +208,12 @@ class ObjectiveCCodeGenerator :
                     baseSubTypeSchemeObj = schemeObj.getScheme(schemeName)
                     baseSubTypeTitle = baseSubTypeSchemeObj.type_name.upper()
                     baseSubTypeTitle = baseSubTypeTitle[:1] + baseSubTypeSchemeObj.type_name[1:]
-                    
+
                     if baseSubTypeSchemeObj.isNaturalType() == False :
                         resultStringList.append(self.getterMethodDefinitionStringInDictionary(baseSubTypeSchemeObj.getClassName() + " *", schemeObj.type_name, baseSubTypeSchemeObj.getClassName(), postFix))
                     else :
                         resultStringList.append(self.getterMethodDefinitionStringInDictionary(self.getNaturalTypeClassString(baseSubTypeSchemeObj.rootBaseType()), schemeObj.type_name, baseSubTypeTitle, postFix))
-            
+
                 elif schemeName == "any" :
                     resultStringList.append(self.getterMethodDefinitionStringInDictionary("id", schemeObj.type_name, "Object", postFix))
                 else :
@@ -413,12 +225,12 @@ class ObjectiveCCodeGenerator :
                 #print "(getterMethodDefinitionString : array) : find scheme : " + schemeName + " from : " + schemeObj.type_name
                 if schemeObj.hasScheme(schemeName) :
                     baseSubTypeSchemeObj = schemeObj.getScheme(schemeName)
-                    
+
                     if baseSubTypeSchemeObj.isNaturalType() == False :
                         resultStringList.append(self.getterMethodDefinitionStringInArray(baseSubTypeSchemeObj.getClassName() + " *", baseSubTypeSchemeObj.type_name, titleName, postFix))
                     else :
                         resultStringList.append(self.getterMethodDefinitionStringInArray(self.getNaturalTypeClassString(baseSubTypeSchemeObj.rootBaseType()), baseSubTypeSchemeObj.type_name, titleName, postFix))
-            
+
                 elif schemeName == "any" :
                     resultStringList.append(self.getterMethodDefinitionStringInArray("id", "object", titleName, postFix))
                 else :
@@ -436,7 +248,7 @@ class ObjectiveCCodeGenerator :
             resultStringList = []
 
         return resultStringList
-            
+
     def getterMethodString(self, schemeObj) :
         resultString = ""
         postFix = ":(NSError **)error {\n"
@@ -444,7 +256,7 @@ class ObjectiveCCodeGenerator :
         titleName = titleName[:1] + schemeObj.type_name[1:]
         tmpVarName = "tmp" + self.getTitledString(schemeObj.type_name)
         selfDicName = "self." + self.makeVarName(schemeObj)
-        
+
         if schemeObj.rootBaseType() == "multi" :
             selfDicName = "new" + self.makeVarName(schemeObj) + "Dic"
             multiTypeVariableNilValidation = "if (!self."+ schemeObj.type_name + ") return nil;\n"
@@ -457,7 +269,7 @@ class ObjectiveCCodeGenerator :
                     baseSubTypeSchemeObj = schemeObj.getScheme(schemeName)
                     baseSubTypeTitle = baseSubTypeSchemeObj.type_name.upper()
                     baseSubTypeTitle = baseSubTypeTitle[:1] + baseSubTypeSchemeObj.type_name[1:]
-                    
+
                     if baseSubTypeSchemeObj.isNaturalType() == False :
                         tmpDicName = "tmp" + self.getTitledString(schemeObj.type_name) + "Dic"
                         resultString += self.getterMethodDefinitionStringInDictionary(baseSubTypeSchemeObj.getClassName() + " *", schemeObj.type_name, baseSubTypeSchemeObj.getClassName(), postFix)
@@ -476,7 +288,7 @@ class ObjectiveCCodeGenerator :
                         resultString += self.getHandleErrorCode( tmpVarName +" == nil", "", "nil", 1)
                         resultString += self.getNaturalTypeValidationCode(baseSubTypeSchemeObj, tmpVarName, 1, "nil")
                         resultString += "    return " + tmpVarName + ";\n}\n"
-                
+
                 elif schemeName == "any" :
                     resultString += self.getterMethodDefinitionStringInDictionary("id", schemeObj.type_name, "Object", postFix)
                     resultString += "    " + multiTypeVariableNilValidation
@@ -489,13 +301,13 @@ class ObjectiveCCodeGenerator :
                     resultString += "    " + defineNewDicAndCheck
                     resultString += self.getNaturalTypeGetterFromDictionaryCode(schemeName, self.getNaturalTypeClassString(schemeName), tmpVarName, selfDicName, schemeObj.type_name, (schemeObj.required != True), 1, "nil")
                     resultString += "    return " + tmpVarName + ";\n}\n"
-        
+
         elif schemeObj.rootBaseType() == "array" :
             postFix = "AtIndex:(NSUInteger)index withError:(NSError **)error {\n";
             for schemeName in schemeObj.getSubType() :
                 if schemeObj.hasScheme(schemeName) :
                     baseSubTypeSchemeObj = schemeObj.getScheme(schemeName)
-                    
+
                     if baseSubTypeSchemeObj.isNaturalType() == False :
                         tmpDicName = "tmp" + self.getTitledString(schemeObj.type_name) + "Dic"
                         resultString += self.getterMethodDefinitionStringInArray(baseSubTypeSchemeObj.getClassName() + " *", baseSubTypeSchemeObj.type_name, titleName, postFix)
@@ -511,7 +323,7 @@ class ObjectiveCCodeGenerator :
                         resultString += self.getNaturalTypeValidationCode(baseSubTypeSchemeObj, tmpVarName, 1, "nil")
                         resultString += "    return " + tmpVarName + ";\n}\n"
 
-            
+
                 elif schemeName == "any" :
                     resultString += self.getterMethodDefinitionStringInArray("id", "object", titleName, postFix)
                     resultString += self.getGetterFromArrayCode("id ", tmpVarName, selfDicName, "index", (schemeObj.required != True), 1, "nil")
@@ -520,20 +332,22 @@ class ObjectiveCCodeGenerator :
                     resultString += self.getterMethodDefinitionStringInArray(self.getNaturalTypeClassString(schemeName), schemeName, titleName, postFix)
                     resultString += self.getNaturalTypeGetterFromArrayCode(schemeName, self.getNaturalTypeClassString(schemeName), tmpVarName, selfDicName, "index", (schemeObj.required != True), 1, "nil")
                     resultString += "    return " + tmpVarName + ";\n}\n"
-        
+
         elif schemeObj.base_type == "any"  :
-            pass
-        
+            resultString += self.getterMethodDefinitionStringInDictionary("id", schemeObj.type_name, "Object", postFix)
+            resultString += self.getUndefinedTypeGetterFromDictionaryCode("id ", tmpVarName, selfDicName, schemeObj.type_name, (schemeObj.required != True), 1, "nil")
+            resultString += "    return " + tmpVarName + ";\n}\n"
+
         elif schemeObj.isNaturalType() :
             print "Error : " + schemeObj.type_name + " is Natural type. don't need to implement getter method.\n"
             return "#error " + schemeObj.type_name + " is Natural type. don't need to implement getter method.\n"
-        
+
         else :
             print "Error : " + schemeObj.type_name + " is Custom Object type. don't need to implement getter method.\n"
             return "#error " + schemeObj.type_name + " is Custom Object type. don't need to implement getter method.\n"
-    
+
         return resultString
-    
+
     def getIndentString(self, indentDepth) :
         resultString = ""
         indentString = "    "
@@ -541,7 +355,7 @@ class ObjectiveCCodeGenerator :
             resultString += indentString
 
         return resultString
-    
+
     def getHandleErrorCode(self, statement, errorString, returnVarName, indentDepth) :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
@@ -560,13 +374,13 @@ class ObjectiveCCodeGenerator :
         errorString = "NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:@\"" + self.makeVarName(schemeObj) + "\", @\"propertyName\", @\"" + schemeObj.type_name + "\", @\"key\", @\"validation error\", @\"reason\", NSStringFromClass([self class]), @\"objectClass\",nil];\n"
         errorString += secondIndent + "*error = [NSError errorWithDomain:k" + self.projectPrefix + "ErrorDomain_parser code:k" + self.projectPrefix + "ErrorDomain_parser_valueIsNotValid userInfo:userInfo];\n"
         errorString += secondIndent + "NSLog(@\"%@\", *error);\n"
-        
+
         maxResult = schemeObj.getMaxLength()
-        
+
         if maxResult[0] :
             statementString = str(varName) + ".length > " + str(maxResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-        
+
         minResult = schemeObj.getMinLength()
         if minResult[0] :
             statementString = varName + ".length < " + str(minResult[1])
@@ -576,7 +390,7 @@ class ObjectiveCCodeGenerator :
         if regExResult[0] :
             statementString = varName + " && ["+varName+" matchesRegExString:@\"" +str(regExResult[1])+ "\"] == NO"
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-            
+
         return resultString
 
     def getDateValidationCode(self, schemeObj, varName, indentDepth, returnVarName) :
@@ -587,12 +401,12 @@ class ObjectiveCCodeGenerator :
         errorString = "NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:@\"" + self.makeVarName(schemeObj) + "\", @\"propertyName\", @\"" + schemeObj.type_name + "\", @\"key\", @\"validation error\", @\"reason\", NSStringFromClass([self class]), @\"objectClass\",nil];\n"
         errorString += secondIndent + "*error = [NSError errorWithDomain:k" + self.projectPrefix + "ErrorDomain_parser code:k" + self.projectPrefix + "ErrorDomain_parser_valueIsNotValid userInfo:userInfo];\n"
         errorString += secondIndent + "NSLog(@\"%@\", *error);\n"
-        
+
         maxResult = schemeObj.getMaxValue()
         if maxResult[0] :
             statementString = "["+varName+" timeIntervalSince1970] > " + str(maxResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-        
+
         minResult = schemeObj.getMinValue()
         if minResult[0] :
             statementString = "["+varName+" timeIntervalSince1970] < " + str(minResult[1])
@@ -608,12 +422,12 @@ class ObjectiveCCodeGenerator :
         errorString = "NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:@\"" + self.makeVarName(schemeObj) + "\", @\"propertyName\", @\"" + schemeObj.type_name + "\", @\"key\", @\"validation error\", @\"reason\", NSStringFromClass([self class]), @\"objectClass\",nil];\n"
         errorString += secondIndent + "*error = [NSError errorWithDomain:k" + self.projectPrefix + "ErrorDomain_parser code:k" + self.projectPrefix + "ErrorDomain_parser_valueIsNotValid userInfo:userInfo];\n"
         errorString += secondIndent + "NSLog(@\"%@\", *error);\n"
-        
+
         maxResult = schemeObj.getMaxLength()
         if maxResult[0] :
             statementString = varName+".length > " + str(maxResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-        
+
         minResult = schemeObj.getMinLength()
         if minResult[0] :
             statementString = varName+".length < " + str(minResult[1])
@@ -629,18 +443,18 @@ class ObjectiveCCodeGenerator :
         errorString = "NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:@\"" + self.makeVarName(schemeObj) + "\", @\"propertyName\", @\"" + schemeObj.type_name + "\", @\"key\", @\"validation error\", @\"reason\", NSStringFromClass([self class]), @\"objectClass\",nil];\n"
         errorString += secondIndent + "*error = [NSError errorWithDomain:k" + self.projectPrefix + "ErrorDomain_parser code:k" + self.projectPrefix + "ErrorDomain_parser_valueIsNotValid userInfo:userInfo];\n"
         errorString += secondIndent + "NSLog(@\"%@\", *error);\n"
-        
+
         maxResult = schemeObj.getMaxValue()
         if maxResult[0] :
             statementString = "["+varName+" floatValue] > " + str(maxResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-        
+
         minResult = schemeObj.getMinValue()
         if minResult[0] :
             statementString = "["+varName+" floatValue] < " + str(minResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
         return resultString
-            
+
     def getArrayValidationCode(self, schemeObj, varName, indentDepth, returnVarName) :
         resultString = ""
         statementString = ""
@@ -649,12 +463,12 @@ class ObjectiveCCodeGenerator :
         errorString = "NSDictionary *userInfo = [NSDictionary dictionaryWithObjectsAndKeys:@\"" + self.makeVarName(schemeObj) + "\", @\"propertyName\", @\"" + schemeObj.type_name + "\", @\"key\", @\"validation error\", @\"reason\", NSStringFromClass([self class]), @\"objectClass\",nil];\n"
         errorString += secondIndent + "*error = [NSError errorWithDomain:k" + self.projectPrefix + "ErrorDomain_parser code:k" + self.projectPrefix + "ErrorDomain_parser_valueIsNotValid userInfo:userInfo];\n"
         errorString += secondIndent + "NSLog(@\"%@\", *error);\n"
-                
+
         maxResult = schemeObj.getMaxCount()
         if maxResult[0] :
             statementString = varName+".count > " + str(maxResult[1])
             resultString += self.getHandleErrorCode(statementString, errorString, returnVarName, indentDepth)
-        
+
         minResult = schemeObj.getMinCount()
         if minResult[0] :
             statementString = varName+".count < " + str(minResult[1])
@@ -674,7 +488,7 @@ class ObjectiveCCodeGenerator :
                 return self.getDateValidationCode(schemeObj, varName, indentDepth, returnVarName)
             elif schemeObj.rootBaseType() == "data" :
                 return self.getDataValidationCode(schemeObj, varName, indentDepth, returnVarName)
-    
+
         return ""
 
 
@@ -724,21 +538,21 @@ class ObjectiveCCodeGenerator :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-        
+
         resultString += firstIndent
         if className and len(className) :
             resultString += className
         resultString += varName + " = [" + self.projectPrefix + "APIParser objectFromResponseDictionary:" + dicName + " forKey:@\"" + keyName + "\" acceptNil:"
-    
+
         if allowNull :
             resultString += "YES"
         else :
             resultString += "NO"
         resultString += " error:error];\n"
         resultString += self.getHandleErrorCode("*error", "", returnVarName, indentDepth)
-        
+
         return resultString
-                
+
     def getNaturalTypeGetterFromArrayCode(self, schemeObj, className, varName, arrayName, indexVar, allowNull, indentDepth, returnVarName) :
         schemeBaseType = ""
         if type(schemeObj) == str or type(schemeObj) == unicode:
@@ -752,7 +566,7 @@ class ObjectiveCCodeGenerator :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-        
+
         if schemeBaseType == "array" :
             resultString += firstIndent + className + varName + " = [" + self.projectPrefix + "APIParser arrayFromResponseArray:" + arrayName + " atIndex:" + indexVar + " acceptNil:"
         elif schemeBaseType == "string" :
@@ -768,21 +582,21 @@ class ObjectiveCCodeGenerator :
         else :
             print "Error (getNaturalTypeGetterFromArrayCode): undfined scheme natural base type " + schemeObj
             return "#error - undfined scheme natural base type\n"
-            
+
         if allowNull :
             resultString += "YES"
         else :
             resultString += "NO"
         resultString += " error:error];\n"
         resultString += self.getHandleErrorCode("*error", "", returnVarName, indentDepth)
-        
+
         return resultString
-                
+
     def getDictionaryGetterFromDictionaryCode(self, varName, dicName, keyName, allowNull, indentDepth, returnVarName) :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-        
+
         resultString += firstIndent + "NSDictionary *"+ varName + " = [" + self.projectPrefix + "APIParser dictionaryFromResponseDictionary:" + dicName + " forKey:@\"" + keyName + "\" acceptNil:"
         if allowNull :
             resultString += "YES"
@@ -796,7 +610,7 @@ class ObjectiveCCodeGenerator :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-    
+
         resultString += firstIndent + "NSDictionary *"+ varName + " = [" + self.projectPrefix + "APIParser dictionaryFromResponseArray:" + arrayName + " atIndex:" + indexVar + " acceptNil:"
         if allowNull :
             resultString += "YES"
@@ -804,7 +618,7 @@ class ObjectiveCCodeGenerator :
             resultString += "NO"
         resultString += " error:error];\n"
         resultString += self.getHandleErrorCode("*error", "", returnVarName, indentDepth)
-    
+
         return resultString
 
     def getObjectAllocatorFromDictionaryCode(self, defineClass, className, varName, dicName, allowNull, indentDepth, returnVarName) :
@@ -820,24 +634,24 @@ class ObjectiveCCodeGenerator :
         resultString += firstIndent + "}\n"
 
         return resultString
-    
+
     def getDictionaryAllocatorCode(self, defineClass, varName, objectName, keyNmae, indentDepth, returnVarName) :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-        
+
         resultString += firstIndent
         if defineClass :
             resultString += "NSDictionary *"
         resultString += varName + " = [NSDictionary dictionaryWithObjectsAndKeys:"+ objectName +", @\"" + keyNmae + "\", nil];\n"
-        
+
         return resultString
 
     def getGetterFromDictionaryCode(self, className, varName, dicName, keyName, allowNull, indentDepth, returnVarName) :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
         secondIndent = self.getIndentString(indentDepth+1)
-        
+
         resultString += firstIndent + className + varName + " = [" + self.projectPrefix + "APIParser objectFromResponseDictionary:" + dicName + " forKey:@\"" + keyName + "\" acceptNil:"
         if allowNull :
             resultString += "YES"
@@ -851,7 +665,7 @@ class ObjectiveCCodeGenerator :
     def getGetterFromArrayCode(self, className, varName, arrayName, indexVar, allowNull, indentDepth, returnVarName) :
         resultString = ""
         firstIndent = self.getIndentString(indentDepth)
-        secondIndent = self.getIndentString(indentDepth+1)        
+        secondIndent = self.getIndentString(indentDepth+1)
         resultString += firstIndent + className + varName + " = [" + self.projectPrefix + "APIParser objectFromResponseArray:" + arrayName + " atIndex:" + indexVar
         resultString += " acceptNil:"
         if allowNull :
@@ -861,30 +675,31 @@ class ObjectiveCCodeGenerator :
         resultString += " error:error];\n"
         resultString += self.getHandleErrorCode("*error", "", returnVarName, indentDepth)
         return resultString
-    
+
     def propertyDefinitionString(self, schemeObj) :
         resultString = ""
-        
+
         if schemeObj.isNaturalType() :
             if schemeObj.rootBaseType() == "boolean" :
-                return "@property (nonatomic, assign) BOOL " + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, assign) BOOL " + self.makeVarName(schemeObj) + ";"
             elif schemeObj.rootBaseType() == "string" :
-                return "@property (nonatomic, strong) NSString *" + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) NSString *" + self.makeVarName(schemeObj) + ";"
             elif schemeObj.rootBaseType() == "date" :
-                return "@property (nonatomic, strong) NSDate *" + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) NSDate *" + self.makeVarName(schemeObj) + ";"
             elif schemeObj.rootBaseType() == "data" :
-                return "@property (nonatomic, strong) NSData *" + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) NSData *" + self.makeVarName(schemeObj) + ";"
             elif schemeObj.rootBaseType() == "number" :
-                return "@property (nonatomic, strong) NSNumber *" + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) NSNumber *" + self.makeVarName(schemeObj) + ";"
             elif schemeObj.rootBaseType() == "array" :
-                return "@property (nonatomic, strong) NSArray *" + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) NSArray *" + self.makeVarName(schemeObj) + ";"
             else :
-                return "@property (nonatomic, strong) id " + self.makeVarName(schemeObj) + ";\n"
+                return "@property (nonatomic, strong) id " + self.makeVarName(schemeObj) + ";"
 
-        elif schemeObj.rootBaseType() == "multi" or schemeObj.rootBaseType() == "any":
-            return "@property (nonatomic, strong) id " + self.makeVarName(schemeObj) + ";\n"
-        
-        return "@property (nonatomic, strong) "+ schemeObj.getClassName() +" *" + self.makeVarName(schemeObj) + ";\n"
+        elif schemeObj.rootBaseType() == "multi" or schemeObj.rootBaseType() == "any" :
+            return "@property (nonatomic, strong) NSDictionary *" + self.makeVarName(schemeObj) + ";"
+
+
+        return "@property (nonatomic, strong) "+ schemeObj.getClassName() +" *" + self.makeVarName(schemeObj) + ";"
 
     def propertyDecodeString(self, schemeObj, indentDepth) :
         firstIndent = self.getIndentString(indentDepth)
@@ -949,7 +764,7 @@ class ObjectiveCCodeGenerator :
 
 
 class TemplateCodeGenerator :
-    
+
     projectPrefix = ""
     dirPath = ""
     templatePath = "./templates"
@@ -1024,31 +839,3 @@ class TemplateCodeGenerator :
         self.writeNSStringCategory()
         self.dirPath = baseDirPath + "/Utilities/APIParser"
         self.writeAPIParser()
-
-
-        
-    
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
