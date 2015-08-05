@@ -39,6 +39,7 @@ inputfile = 'do you have files?'
 projectPrefix = ''
 target = 'iOS'
 dirPathToSaveCodes = './src'
+dirPathToSaveUtility = ''
 objectSuffix = "JSONObject"
 
 usageString = '\nreadJSON.py [ -p | -t | -o | -s ] [-i]\n'
@@ -49,11 +50,12 @@ usageString += '  -s, --suffix=         classname suffix (default: JSONObject). 
 usageString += '  -t, --target=         target platform iOS or Android (default: iOS)\n'
 usageString += '  -i, --input=          meta-JSON file to read\n'
 usageString += '  -o, --output=         ouput path of generated source codes\n'
+usageString += '  -u, --utility=        ouput path of generated Utility codes. Use "-u false" for no utility\n'
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
     try:
-        opts, args = getopt.getopt(argv,"ho:p:s:t:i:",["prefix=","suffix=","target=","input=","output="])
+        opts, args = getopt.getopt(argv,"ho:p:s:t:i:u:",["prefix=","suffix=","target=","input=","output=","utility="])
     except getopt.GetoptError:
         print usageString
         sys.exit(2)
@@ -74,7 +76,20 @@ if __name__ == "__main__":
             objectSuffix = arg
             if objectSuffix == "false":
                 objectSuffix = ""
+        elif opt in ("-u", "--utility"):
+            dirPathToSaveUtility = arg
 
+    
+
+    if dirPathToSaveUtility == "":
+        tmpSourcePath = dirPathToSaveCodes
+        if tmpSourcePath.endswith("/") :
+            tmpSourcePath = tmpSourcePath[:-1]
+        dirPathToSaveUtility = tmpSourcePath + "/Utility"
+
+    elif dirPathToSaveUtility == "false":
+        dirPathToSaveUtility = "";
+    
     addFiles = False
     for arg in argv :
         if arg.endswith(inputfile) :
@@ -142,7 +157,8 @@ if iOS :
     templateCodeGen.templatePath = templatePath
     templateCodeGen.projectPrefix = projectPrefix
     templateCodeGen.dirPath = dirPathToSaveCodes
-    templateCodeGen.writeTemplates()
+    if len(dirPathToSaveUtility) != 0 :
+        templateCodeGen.writeTemplates(dirPathToSaveUtility)
 
 JSONScheme.projectPrefix = projectPrefix
 JSONScheme.objectSuffix = objectSuffix

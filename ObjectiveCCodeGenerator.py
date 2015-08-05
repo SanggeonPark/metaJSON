@@ -1017,14 +1017,14 @@ class TemplateCodeGenerator :
         finally :
             implDstFile.close()
 
-    def writeTemplates(self) :
+    def writeTemplates(self, templatePath) :
 
-        if self.dirPath.endswith("/") :
-            self.dirPath = self.dirPath[:-1]
-        baseDirPath = self.dirPath
-        self.dirPath = baseDirPath + "/Utilities/NSString"
+        if templatePath.endswith("/") :
+            templatePath = templatePath[:-1]
+        
+        self.dirPath = templatePath + "/NSString"
         self.writeNSStringCategory()
-        self.dirPath = baseDirPath + "/Utilities/APIParser"
+        self.dirPath = templatePath + "/APIParser"
         self.writeAPIParser()
 
 
