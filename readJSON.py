@@ -42,15 +42,15 @@ dirPathToSaveCodes = './src'
 dirPathToSaveUtility = ''
 objectSuffix = "JSONObject"
 
-usageString = '\nreadJSON.py [ -p | -t | -o | -s ] [-i]\n'
+usageString = '\nreadJSON.py [ -p | -t | -o | -s | -u ] [-i]\n'
 usageString += 'Options:\n'
 usageString += '  -h, --help            shows help\n'
 usageString += '  -p, --prefix=         project prefix (default: S2M)\n'
 usageString += '  -s, --suffix=         classname suffix (default: JSONObject). Use "-s false" for no suffix\n'
 usageString += '  -t, --target=         target platform iOS or Android (default: iOS)\n'
-usageString += '  -i, --input=          meta-JSON file to read\n'
 usageString += '  -o, --output=         ouput path of generated source codes\n'
 usageString += '  -u, --utility=        ouput path of generated Utility codes. Use "-u false" for no utility\n'
+usageString += '  -i, --input=          meta-JSON file to read\n'
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
